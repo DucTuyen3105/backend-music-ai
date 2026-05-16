@@ -1,0 +1,342 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import tempfile
+import zipfile
+from collections import OrderedDict
+from pathlib import Path
+
+import librosa
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class MusicGenreCNNAttention(nn.Module):
+    def __init__(self, num_classes: int = 8):
+        super().__init__()
+        self.freq_mask = nn.Identity()
+        self.time_mask = nn.Identity()
+
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(64)
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm2d(128)
+        self.conv4 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
+        self.bn4 = nn.BatchNorm2d(256)
+
+        self.pool = nn.MaxPool2d(2, 2)
+        self.attention = nn.MultiheadAttention(
+            embed_dim=256,
+            num_heads=4,
+            batch_first=True,
+        )
+        self.layer_norm = nn.LayerNorm(256)
+        self.gap = nn.AdaptiveAvgPool2d(1)
+
+        self.classifier = nn.Sequential(
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(128, num_classes),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dim() == 3:
+            x = x.unsqueeze(1)
+
+        if self.training:
+            x = self.freq_mask(x)
+            x = self.time_mask(x)
+
+        x = self.pool(F.relu(self.bn1(self.conv1(x))))
+        x = self.pool(F.relu(self.bn2(self.conv2(x))))
+        x = self.pool(F.relu(self.bn3(self.conv3(x))))
+        x = self.pool(F.relu(self.bn4(self.conv4(x))))
+
+        batch_size, channels, height, width = x.size()
+        x_seq = x.view(batch_size, channels, height * width).permute(0, 2, 1)
+        attention_out, _ = self.attention(x_seq, x_seq, x_seq)
+        x_seq = self.layer_norm(x_seq + attention_out)
+        x = x_seq.permute(0, 2, 1).view(batch_size, channels, height, width)
+
+        x = self.gap(x)
+        x = x.view(x.size(0), -1)
+        return self.classifier(x)
+
+
+class MusicGenreCNN(nn.Module):
+    def __init__(self, num_classes: int = 8):
+        super().__init__()
+        self.freq_mask = nn.Identity()
+        self.time_mask = nn.Identity()
+
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(64)
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm2d(128)
+        self.conv4 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
+        self.bn4 = nn.BatchNorm2d(256)
+
+        self.pool = nn.MaxPool2d(2, 2)
+        self.gap = nn.AdaptiveAvgPool2d(1)
+        self.classifier = nn.Sequential(
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(128, num_classes),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dim() == 3:
+            x = x.unsqueeze(1)
+
+        if self.training:
+            x = self.freq_mask(x)
+            x = self.time_mask(x)
+
+        x = self.pool(F.relu(self.bn1(self.conv1(x))))
+        x = self.pool(F.relu(self.bn2(self.conv2(x))))
+        x = self.pool(F.relu(self.bn3(self.conv3(x))))
+        x = self.pool(F.relu(self.bn4(self.conv4(x))))
+        x = self.gap(x)
+        x = x.view(x.size(0), -1)
+        return self.classifier(x)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--audio", required=True)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--label-map", required=True)
+    parser.add_argument("--stats", required=True)
+    return parser.parse_args()
+
+
+def newest_mtime(directory: Path) -> float:
+    return max(path.stat().st_mtime for path in directory.rglob("*") if path.is_file())
+
+
+def archive_names(directory: Path, include_root: bool) -> set[str]:
+    names = set()
+    for file_path in directory.rglob("*"):
+        if not file_path.is_file():
+            continue
+        relative = file_path.relative_to(directory)
+        if include_root:
+            arcname = Path(directory.name) / relative
+        else:
+            arcname = relative
+        names.add(str(arcname).replace(os.sep, "/"))
+    return names
+
+
+def archive_matches_source(
+    directory: Path,
+    archive_path: Path,
+    include_root: bool,
+) -> bool:
+    if not zipfile.is_zipfile(archive_path):
+        return False
+    with zipfile.ZipFile(archive_path, "r") as zf:
+        return set(zf.namelist()) == archive_names(directory, include_root)
+
+
+def archive_checkpoint(directory: Path, include_root: bool) -> Path:
+    cache_dir = Path(tempfile.gettempdir()) / "music-ai-model-cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    suffix = "root" if include_root else "flat"
+    archive_path = cache_dir / f"{directory.name}-{suffix}.pth"
+    source_mtime = newest_mtime(directory)
+
+    if archive_path.exists():
+        archive_path.unlink()
+
+    with zipfile.ZipFile(
+        archive_path,
+        "w",
+        compression=zipfile.ZIP_STORED,
+        strict_timestamps=False,
+    ) as zf:
+        for file_path in directory.rglob("*"):
+            if not file_path.is_file():
+                continue
+            relative = file_path.relative_to(directory)
+            if include_root:
+                arcname = Path(directory.name) / relative
+            else:
+                arcname = relative
+            zf.write(file_path, str(arcname).replace(os.sep, "/"))
+
+    os.utime(archive_path, (source_mtime, source_mtime))
+    return archive_path
+
+
+def checkpoint_candidates(model_path: str):
+    path = Path(model_path)
+    if path.is_file():
+        yield path
+        return
+    if not path.is_dir():
+        raise FileNotFoundError(f"Model path not found: {model_path}")
+    yield archive_checkpoint(path, include_root=True)
+
+
+def torch_load(path: Path, device: torch.device):
+    try:
+        return torch.load(path, map_location=device, weights_only=False)
+    except TypeError:
+        return torch.load(path, map_location=device)
+
+
+def normalize_state_dict(checkpoint) -> OrderedDict:
+    if isinstance(checkpoint, nn.Module):
+        return checkpoint.state_dict()
+
+    if isinstance(checkpoint, dict):
+        for key in ("state_dict", "model_state_dict", "model"):
+            value = checkpoint.get(key)
+            if isinstance(value, dict):
+                checkpoint = value
+                break
+
+    if not isinstance(checkpoint, dict):
+        raise TypeError("Unsupported checkpoint format")
+
+    normalized = OrderedDict()
+    for key, value in checkpoint.items():
+        clean_key = key[7:] if key.startswith("module.") else key
+        normalized[clean_key] = value
+    return normalized
+
+
+def load_model(model_path: str, num_classes: int, device: torch.device) -> nn.Module:
+    errors: list[str] = []
+    for candidate in checkpoint_candidates(model_path):
+        try:
+            checkpoint = torch_load(candidate, device)
+            state_dict = normalize_state_dict(checkpoint)
+            has_attention = any(
+                key.startswith("attention.") or key.startswith("layer_norm.")
+                for key in state_dict
+            )
+            model_class = MusicGenreCNNAttention if has_attention else MusicGenreCNN
+            model = model_class(num_classes=num_classes).to(device)
+            model.load_state_dict(state_dict)
+            model.eval()
+            return model
+        except Exception as exc:
+            errors.append(f"{candidate}: {exc}")
+
+    raise RuntimeError(f"Could not load model checkpoint: {' | '.join(errors)}")
+
+
+def load_json(path: str):
+    with open(path, "r", encoding="utf-8") as file:
+        return json.load(file)
+
+
+def predict_30s(
+    audio_path: str,
+    model: nn.Module,
+    inv_label_map: dict[int, str],
+    means: np.ndarray,
+    stds: np.ndarray,
+    device: torch.device,
+) -> list[tuple[str, float]]:
+    y_full, sr = librosa.load(audio_path, sr=22050, duration=30.0)
+    if y_full.size == 0:
+        raise ValueError("Audio clip contains no decodable samples")
+
+    segment_duration = 7.0
+    samples_per_segment = int(segment_duration * sr)
+    outputs = []
+
+    for index in range(4):
+        start = index * samples_per_segment
+        y_segment = y_full[start : start + samples_per_segment]
+        if len(y_segment) < samples_per_segment:
+            y_segment = np.pad(
+                y_segment,
+                (0, samples_per_segment - len(y_segment)),
+            )
+
+        mel = librosa.feature.melspectrogram(
+            y=y_segment,
+            sr=sr,
+            n_mels=128,
+            n_fft=2048,
+            hop_length=512,
+        )
+        mel_db = librosa.power_to_db(mel, ref=np.max)
+
+        if mel_db.shape[1] > 300:
+            mel_db = mel_db[:, :300]
+        else:
+            mel_db = np.pad(mel_db, ((0, 0), (0, 300 - mel_db.shape[1])))
+
+        mel_norm = (mel_db - means) / stds
+        input_tensor = (
+            torch.tensor(mel_norm).float().unsqueeze(0).unsqueeze(0).to(device)
+        )
+
+        with torch.no_grad():
+            output = model(input_tensor)
+            outputs.append(torch.nn.functional.softmax(output, dim=1))
+
+    final_probs = torch.mean(torch.stack(outputs), dim=0)
+    top_probs, top_indices = torch.topk(final_probs, k=3, dim=1)
+
+    results = []
+    for index in range(3):
+        genre = inv_label_map[int(top_indices[0][index].item())]
+        probability = float(top_probs[0][index].item() * 100)
+        results.append((genre, probability))
+    return results
+
+
+def main() -> int:
+    args = parse_args()
+    label_map = load_json(args.label_map)
+    stats = load_json(args.stats)
+    inv_label_map = {int(value): key for key, value in label_map.items()}
+    means = np.array(stats["mean"]).reshape(128, 1)
+    stds = np.array(stats["std"]).reshape(128, 1)
+    stds = np.where(stds == 0, 1e-8, stds)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = load_model(args.model, num_classes=len(label_map), device=device)
+    top_results = predict_30s(args.audio, model, inv_label_map, means, stds, device)
+    top_three = {genre: round(score, 2) for genre, score in top_results}
+    label, score = top_results[0]
+
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "prediction": {
+                    "label": label,
+                    "score": round(score, 2),
+                    "top_three": top_three,
+                },
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        raise SystemExit(1)
