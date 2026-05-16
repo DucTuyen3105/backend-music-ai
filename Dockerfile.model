@@ -8,14 +8,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-COPY music_genre_classification/requirements.txt ./
+COPY requirements-model.txt ./
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir --default-timeout=1000 -r requirements.txt
+    pip install --no-cache-dir --default-timeout=1000 -r requirements-model.txt
 
 # Copy the model and API code
-COPY music_genre_classification/ ./music_genre_classification/
+COPY music_genre_classification.py ./
 COPY best_model/ ./best_model/
 
 EXPOSE 8001
 
-CMD ["python", "-m", "uvicorn", "music_genre_classification.model_api:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["python", "-m", "uvicorn", "music_genre_classification:app", "--host", "0.0.0.0", "--port", "8001"]
