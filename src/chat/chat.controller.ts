@@ -1,38 +1,96 @@
 import {
   Body,
-  Controller, FileTypeValidator,
-  MaxFileSizeValidator,
+  Controller,
+  Delete,
+  Get,
   Param,
-  ParseFilePipe,
-  Post, Query,
+  Post,
+  Req,
   UploadedFile,
-  UseInterceptors
+  UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { AnalyzeAudioDTO, CreateConversationDTO } from '../DTO/chat.dto';
+import type { AuthenticatedRequest } from '../auth/jwt.strategy';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ChatService } from './chat.service';
-import {CreateConversationDTO} from "../DTO/chat.dto";
-import {FileInterceptor} from "@nestjs/platform-express";
 
+const MAX_AUDIO_FILE_SIZE = 50 * 1024 * 1024;
+
+@UseGuards(JwtAuthGuard)
 @Controller('chat')
 export class ChatController {
   constructor(private readonly chatService: ChatService) {}
-  @Post("/create-conversation")
-  public async createConversation(@Body() requestBody:CreateConversationDTO):Promise<any>
-  {
-    return this.chatService.createConversation(requestBody);
-  }
-  @Post('/message/:conversationId/upload')
-  @UseInterceptors(FileInterceptor('file'))
-  async uploadMessageFromUser(
-      @UploadedFile(
-          new ParseFilePipe({
-            validators: [
-              new MaxFileSizeValidator({ maxSize: 10485760, message: 'File không được quá 5MB' }),
-            ],
-          }),
-      )
-      file: Express.Multer.File,@Param('conversationId') conversationId:string,
-      @Query("start-time") startTime:Date, @Query("end-time") endTime:Date
+
+  @Post('/conversations')
+  public async createConversation(
+    @Req() request: AuthenticatedRequest,
+    @Body() requestBody: CreateConversationDTO,
   ): Promise<any> {
-    const result = await this.chatService.uploadMessageFromUser(file, conversationId,startTime,endTime);
+    return this.chatService.createConversation(
+      request.user.userId,
+      requestBody,
+    );
+  }
+
+  @Get('/conversations')
+  public async listConversations(
+    @Req() request: AuthenticatedRequest,
+  ): Promise<any> {
+    return this.chatService.listConversations(request.user.userId);
+  }
+
+  @Get('/conversations/:conversationId')
+  public async getConversation(
+    @Req() request: AuthenticatedRequest,
+    @Param('conversationId') conversationId: string,
+  ): Promise<any> {
+    return this.chatService.getConversation(
+      request.user.userId,
+      conversationId,
+    );
+  }
+
+  @Delete('/conversations/:conversationId')
+  public async deleteConversation(
+    @Req() request: AuthenticatedRequest,
+    @Param('conversationId') conversationId: string,
+  ): Promise<any> {
+    return this.chatService.deleteConversation(
+      request.user.userId,
+      conversationId,
+    );
+  }
+
+  @Post('/conversations/:conversationId/audio')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_AUDIO_FILE_SIZE },
+    }),
+  )
+  async uploadAudio(
+    @Req() request: AuthenticatedRequest,
+    @UploadedFile() file: Express.Multer.File,
+    @Param('conversationId') conversationId: string,
+  ): Promise<any> {
+    return this.chatService.uploadAudio(
+      request.user.userId,
+      conversationId,
+      file,
+    );
+  }
+
+  @Post('/messages/:messageId/analyze')
+  async analyzeAudio(
+    @Req() request: AuthenticatedRequest,
+    @Param('messageId') messageId: string,
+    @Body() requestBody: AnalyzeAudioDTO,
+  ): Promise<any> {
+    return this.chatService.analyzeAudio(
+      request.user.userId,
+      messageId,
+      requestBody,
+    );
   }
 }

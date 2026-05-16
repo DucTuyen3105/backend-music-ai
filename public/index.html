@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Music Recognizer</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <section id="authView" class="auth-view">
+      <div class="auth-card">
+        <div class="brand-line">
+          <span class="brand-mark">AI</span>
+          <div>
+            <h1>Music Recognizer</h1>
+            <p>Phân tích đoạn nhạc bằng model trong best_model.</p>
+          </div>
+        </div>
+
+        <div class="mini-eq" aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span>
+          <span></span><span></span><span></span><span></span><span></span>
+        </div>
+
+        <div class="auth-tabs" role="tablist">
+          <button id="loginTab" class="tab-button active" type="button">
+            Đăng nhập
+          </button>
+          <button id="registerTab" class="tab-button" type="button">
+            Tạo tài khoản
+          </button>
+        </div>
+
+        <form id="loginForm" class="auth-form">
+          <label>
+            <span>Email</span>
+            <input name="email" type="email" autocomplete="email" required />
+          </label>
+          <label>
+            <span>Mật khẩu</span>
+            <input
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              minlength="6"
+              required
+            />
+          </label>
+          <button class="solid-button" type="submit">Vào ứng dụng</button>
+        </form>
+
+        <form id="registerForm" class="auth-form hidden">
+          <label>
+            <span>Tên</span>
+            <input name="username" autocomplete="username" minlength="3" required />
+          </label>
+          <label>
+            <span>Email</span>
+            <input name="email" type="email" autocomplete="email" required />
+          </label>
+          <label>
+            <span>Mật khẩu</span>
+            <input
+              name="password"
+              type="password"
+              autocomplete="new-password"
+              minlength="6"
+              required
+            />
+          </label>
+          <label>
+            <span>Nhập lại mật khẩu</span>
+            <input
+              name="retype_password"
+              type="password"
+              autocomplete="new-password"
+              minlength="6"
+              required
+            />
+          </label>
+          <button class="solid-button" type="submit">Tạo tài khoản</button>
+        </form>
+
+        <p id="authMessage" class="form-message"></p>
+      </div>
+    </section>
+
+    <section id="appView" class="app-shell hidden">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <div class="brand-line compact">
+            <span class="brand-mark small">AI</span>
+            <div>
+              <strong>Music AI</strong>
+              <span id="currentUser">...</span>
+            </div>
+          </div>
+          <button id="newConversationBtn" class="new-chat-button" type="button">
+            Tạo hội thoại
+          </button>
+        </div>
+        <nav id="conversationList" class="conversation-list"></nav>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div class="title-block">
+            <span class="eyebrow">Workspace</span>
+            <h2 id="conversationTitle">Cuộc hội thoại</h2>
+          </div>
+          <div class="topbar-actions">
+            <span id="connectionState" class="state-chip">Sẵn sàng</span>
+            <button id="logoutBtn" class="ghost-button" type="button">
+              Đăng xuất
+            </button>
+          </div>
+        </header>
+
+        <section class="content-grid">
+          <section id="messages" class="messages"></section>
+
+          <aside class="inspector">
+            <div class="panel">
+              <div class="panel-title">
+                <h3>Lịch sử upload</h3>
+                <span id="historyCount">0 file</span>
+              </div>
+              <div id="historyList" class="history-list"></div>
+            </div>
+          </aside>
+        </section>
+
+        <form id="uploadForm" class="composer">
+          <label id="dropzone" class="dropzone">
+            <input id="audioInput" name="file" type="file" accept="audio/*" />
+            <span class="dropzone-title">Chọn hoặc kéo file nhạc vào đây</span>
+            <span class="dropzone-meta">MP3, WAV, FLAC, M4A, OGG, WEBM</span>
+          </label>
+
+          <div class="upload-preview">
+            <div class="file-summary">
+              <strong id="selectedFileName">Chưa có file</strong>
+              <span id="selectedFileDuration">0 phút, 0 giây</span>
+            </div>
+            <canvas id="waveCanvas" width="640" height="74" aria-hidden="true"></canvas>
+            <audio id="localPreview" controls class="audio-preview hidden"></audio>
+          </div>
+
+          <button class="send-button" type="submit">Upload</button>
+        </form>
+      </main>
+    </section>
+  </body>
+</html>

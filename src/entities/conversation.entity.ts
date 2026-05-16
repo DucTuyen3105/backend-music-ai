@@ -1,34 +1,34 @@
 import {
-    Entity,
-    PrimaryGeneratedColumn,
-    Column,
-    CreateDateColumn,
-    UpdateDateColumn,
-    ManyToOne,
-    OneToMany,
-    JoinColumn // Thêm cái này
+  Column,
+  CreateDateColumn,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  OneToMany,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
-import { User } from './user.entity';
 import { Message } from './message.entity';
+import { User } from './user.entity';
 
 @Entity('conversations')
 export class Conversation {
-    @PrimaryGeneratedColumn('uuid')
-    id: string;
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
 
-    @Column({ default: 'Cuộc hội thoại mới' })
-    title: string;
+  @Column({ default: 'Cuộc hội thoại mới' })
+  title: string;
 
-    @ManyToOne(() => User, (user) => user.conversations, { onDelete: 'CASCADE' })
-    @JoinColumn({ name: 'user_id' }) // Xác định tên cột trong database là user_id
-    user: User;
+  @ManyToOne(() => User, (user) => user.conversations, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'user_id' })
+  user: User;
 
-    @OneToMany(() => Message, (message) => message.conversation)
-    messages: Message[];
+  @OneToMany(() => Message, (message) => message.conversation)
+  messages: Message[];
 
-    @CreateDateColumn()
-    created_at: Date;
+  @CreateDateColumn()
+  created_at: Date;
 
-    @UpdateDateColumn()
-    updated_at: Date;
+  @UpdateDateColumn()
+  updated_at: Date;
 }

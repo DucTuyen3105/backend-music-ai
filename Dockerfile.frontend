@@ -1,0 +1,19 @@
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY tsconfig*.json eslint.config.mjs ./
+COPY frontend/ ./frontend/
+RUN npm run frontend:build
+
+FROM node:20-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY --from=builder /app/frontend/.next ./frontend/.next
+COPY --from=builder /app/frontend/next.config.mjs ./frontend/next.config.mjs
+
+EXPOSE 5173
+ENV PORT=5173
+# We use npx to run the locally installed next CLI
+CMD ["npx", "next", "start", "frontend", "-p", "5173"]

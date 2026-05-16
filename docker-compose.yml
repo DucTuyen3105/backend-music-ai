@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: music_ai_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: backend_music_ai
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  model_api:
+    build:
+      context: .
+      dockerfile: Dockerfile.model
+    container_name: music_ai_model
+    restart: always
+    ports:
+      - "8001:8001"
+    volumes:
+      - uploads_data:/app/uploads
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: music_ai_backend
+    restart: always
+    environment:
+      - PORT=3000
+      - DB_TYPE=mysql
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USERNAME=root
+      - DB_PASSWORD=root
+      - DB_DATABASE=backend_music_ai
+      - DB_SYNCHRONIZE=true
+      - JWT_SECRET=super_secret_music_ai_key_2026
+      - JWT_ACCESS_TOKEN_TTL_SECONDS=15552000
+      - MODEL_API_URL=http://model_api:8001/predict
+      - MAX_AUDIO_FILE_BYTES=52428800
+      - MAX_AUDIO_DURATION_SECONDS=600
+    ports:
+      - "3000:3000"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+      model_api:
+        condition: service_started
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: music_ai_frontend
+    restart: always
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:3000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  mysql_data:
+  uploads_data:

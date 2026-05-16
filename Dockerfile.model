@@ -1,0 +1,21 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install system dependencies required for librosa and audio processing
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsndfile1 \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY music_genre_classification/requirements.txt ./
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir --default-timeout=1000 -r requirements.txt
+
+# Copy the model and API code
+COPY music_genre_classification/ ./music_genre_classification/
+COPY best_model/ ./best_model/
+
+EXPOSE 8001
+
+CMD ["python", "-m", "uvicorn", "music_genre_classification.model_api:app", "--host", "0.0.0.0", "--port", "8001"]
