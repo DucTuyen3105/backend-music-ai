@@ -14,14 +14,17 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchaudio.transforms as T
 
 
 class MusicGenreCNNAttention(nn.Module):
     def __init__(self, num_classes: int = 8):
         super().__init__()
-        self.freq_mask = nn.Identity()
-        self.time_mask = nn.Identity()
+        # Augmentation
+        self.freq_mask = T.FrequencyMasking(freq_mask_param=15)
+        self.time_mask = T.TimeMasking(time_mask_param=30)
 
+        # CNN feature extraction blocks
         self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(32)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
@@ -32,13 +35,13 @@ class MusicGenreCNNAttention(nn.Module):
         self.bn4 = nn.BatchNorm2d(256)
 
         self.pool = nn.MaxPool2d(2, 2)
+
+        # --- ATTENTION LAYERS ---
         self.attention = nn.MultiheadAttention(
-            embed_dim=256,
-            num_heads=4,
-            batch_first=True,
+            embed_dim=256, num_heads=4, batch_first=True
         )
         self.layer_norm = nn.LayerNorm(256)
-        self.gap = nn.AdaptiveAvgPool2d(1)
+        # ---------------------------
 
         self.classifier = nn.Sequential(
             nn.Linear(256, 128),
@@ -60,14 +63,28 @@ class MusicGenreCNNAttention(nn.Module):
         x = self.pool(F.relu(self.bn3(self.conv3(x))))
         x = self.pool(F.relu(self.bn4(self.conv4(x))))
 
-        batch_size, channels, height, width = x.size()
-        x_seq = x.view(batch_size, channels, height * width).permute(0, 2, 1)
-        attention_out, _ = self.attention(x_seq, x_seq, x_seq)
-        x_seq = self.layer_norm(x_seq + attention_out)
-        x = x_seq.permute(0, 2, 1).view(batch_size, channels, height, width)
+        # --- ATTENTION PROCESSING ---
+        # Current shape: (Batch, Channels=256, H, W)
+        B, C, H, W = x.size()
 
-        x = self.gap(x)
-        x = x.view(x.size(0), -1)
+        # 1. Average across frequency dimension (H), keep time dimension (W)
+        # New shape: (Batch, Channels=256, Time=W)
+        x_time = x.mean(dim=2)
+
+        # 2. Permute to (Batch, Time, Channels) for attention
+        # This gives us a sequence of W timesteps, each with 256-dim vector
+        x_seq = x_time.permute(0, 2, 1)
+
+        # 3. Multi-head Attention
+        attn_out, _ = self.attention(x_seq, x_seq, x_seq)
+        x_seq = self.layer_norm(x_seq + attn_out)
+
+        # 4. Global Average Pooling on time dimension (W)
+        # (Batch, Time, Channels) -> (Batch, Channels)
+        x = x_seq.mean(dim=1)
+        # --- END ATTENTION PROCESSING ---
+
+        # Pass directly to classifier
         return self.classifier(x)
 
 
@@ -187,6 +204,18 @@ def checkpoint_candidates(model_path: str):
         return
     if not path.is_dir():
         raise FileNotFoundError(f"Model path not found: {model_path}")
+    
+    # Try best_model_attention_v2.pth first
+    v2_model = path / "best_model_attention_v2.pth"
+    if v2_model.is_file():
+        yield v2_model
+    
+    # Try best_model_lam.pth second
+    lam_model = path / "best_model_lam.pth"
+    if lam_model.is_file():
+        yield lam_model
+    
+    # Fallback to archive approach
     yield archive_checkpoint(path, include_root=True)
 
 
@@ -251,24 +280,54 @@ def predict_30s(
     means: np.ndarray,
     stds: np.ndarray,
     device: torch.device,
+    offset: float = 0.0,
 ) -> list[tuple[str, float]]:
-    y_full, sr = librosa.load(audio_path, sr=22050, duration=30.0)
+    """
+    Predict music genre from a 30-second audio clip.
+    
+    Args:
+        audio_path: Path to audio file
+        model: Loaded model
+        inv_label_map: Mapping from index to genre name
+        means: Normalization means
+        stds: Normalization stds
+        device: Torch device (cpu/cuda)
+        offset: Start time in seconds (default: 0)
+    
+    Returns:
+        List of (genre_name, probability%) tuples - Top 3 results
+    """
+    # Load 30 seconds of audio starting from offset
+    y_full, sr = librosa.load(
+        audio_path, sr=22050, offset=offset, duration=30.0
+    )
     if y_full.size == 0:
         raise ValueError("Audio clip contains no decodable samples")
 
-    segment_duration = 7.0
+    # Chia 30s thành 4 đoạn 7.5s mỗi cái (4 * 7.5 = 30s)
+    segment_duration = 7.5  # Changed from 7.0 to 7.5
     samples_per_segment = int(segment_duration * sr)
+    
+    # Pad audio nếu không đủ 30 giây
+    min_samples_needed = samples_per_segment * 4
+    if len(y_full) < min_samples_needed:
+        y_full = np.pad(y_full, (0, min_samples_needed - len(y_full)))
+    
     outputs = []
 
     for index in range(4):
         start = index * samples_per_segment
-        y_segment = y_full[start : start + samples_per_segment]
+        end = start + samples_per_segment
+        y_segment = y_full[start:end]
+        
+        # Ensure segment has correct length
         if len(y_segment) < samples_per_segment:
             y_segment = np.pad(
                 y_segment,
                 (0, samples_per_segment - len(y_segment)),
             )
 
+        # Compute mel-spectrogram
         mel = librosa.feature.melspectrogram(
             y=y_segment,
             sr=sr,
@@ -278,23 +337,28 @@ def predict_30s(
         )
         mel_db = librosa.power_to_db(mel, ref=np.max)
 
+        # Normalize to 300 frames
         if mel_db.shape[1] > 300:
             mel_db = mel_db[:, :300]
         else:
             mel_db = np.pad(mel_db, ((0, 0), (0, 300 - mel_db.shape[1])))
 
+        # Normalize using statistics
         mel_norm = (mel_db - means) / stds
         input_tensor = (
             torch.tensor(mel_norm).float().unsqueeze(0).unsqueeze(0).to(device)
         )
 
+        # Run inference
         with torch.no_grad():
             output = model(input_tensor)
             outputs.append(torch.nn.functional.softmax(output, dim=1))
 
+    # Average predictions across all 4 segments
     final_probs = torch.mean(torch.stack(outputs), dim=0)
     top_probs, top_indices = torch.topk(final_probs, k=3, dim=1)
 
+    # Format results
     results = []
     for index in range(3):
         genre = inv_label_map[int(top_indices[0][index].item())]

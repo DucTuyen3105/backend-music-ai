@@ -9,11 +9,12 @@ services:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: backend_music_ai
     ports:
-      - "3306:3306"
+      - '3306:3306'
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      test:
+        ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-u', 'root', '-proot']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -25,7 +26,7 @@ services:
     container_name: music_ai_model
     restart: always
     ports:
-      - "8001:8001"
+      - '8001:8001'
     volumes:
       - uploads_data:/app/uploads
 
@@ -50,7 +51,7 @@ services:
       - MAX_AUDIO_FILE_BYTES=52428800
       - MAX_AUDIO_DURATION_SECONDS=600
     ports:
-      - "3000:3000"
+      - '3000:3000'
     volumes:
       - uploads_data:/app/uploads
     depends_on:
@@ -66,9 +67,9 @@ services:
     container_name: music_ai_frontend
     restart: always
     environment:
-      - NEXT_PUBLIC_API_BASE_URL=http://localhost:3000
+      - NEXT_PUBLIC_API_BASE_URL=http://backend:3000
     ports:
-      - "5173:5173"
+      - '5173:5173'
     depends_on:
       - backend
 

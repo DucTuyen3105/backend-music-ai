@@ -135,6 +135,13 @@ audio {
   border-color: var(--primary);
 }
 
+.time-grid input:disabled {
+  background: var(--panel-soft);
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
 .auth-form input {
   min-height: 46px;
   padding: 0 14px;

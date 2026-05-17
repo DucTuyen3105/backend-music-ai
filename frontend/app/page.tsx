@@ -100,7 +100,8 @@ function statusPillClass(status?: string) {
 }
 
 function getPageStatusClass(status: string) {
-  if (status.includes('thất bại') || status.includes('lỗi')) return 'status-failed';
+  if (status.includes('thất bại') || status.includes('lỗi'))
+    return 'status-failed';
   if (status.includes('Đang')) return 'status-processing';
   if (status.includes('Đã có')) return 'status-completed';
   return 'status-default';
@@ -112,9 +113,9 @@ export default function MusicWorkspace() {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [authMessage, setAuthMessage] = useState('');
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(
-    null,
-  );
+  const [activeConversationId, setActiveConversationId] = useState<
+    string | null
+  >(null);
   const [messages, setMessages] = useState<MusicMessage[]>([]);
   const [search, setSearch] = useState('');
   const [isTitleDialogOpen, setIsTitleDialogOpen] = useState(false);
@@ -134,12 +135,14 @@ export default function MusicWorkspace() {
   );
 
   const latestResult = useMemo(
-    () => [...messages].reverse().find((item) => item.prediction) || latestAudio,
+    () =>
+      [...messages].reverse().find((item) => item.prediction) || latestAudio,
     [messages, latestAudio],
   );
 
   const activeConversation = useMemo(
-    () => conversations.find((item) => item.id === activeConversationId) || null,
+    () =>
+      conversations.find((item) => item.id === activeConversationId) || null,
     [activeConversationId, conversations],
   );
 
@@ -234,7 +237,9 @@ export default function MusicWorkspace() {
   async function handleAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setAuthMessage('');
-    const body = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const body = Object.fromEntries(
+      new FormData(event.currentTarget).entries(),
+    );
     try {
       const data = await api<{ access_token: string }>(
         authMode === 'login' ? '/auth/login' : '/auth/register',
@@ -322,7 +327,10 @@ export default function MusicWorkspace() {
       const parsedStartTime = parseTimeInput(startTime);
       const parsedEndTime = parseTimeInput(endTime);
 
-      if (!Number.isFinite(parsedStartTime) || !Number.isFinite(parsedEndTime)) {
+      if (
+        !Number.isFinite(parsedStartTime) ||
+        !Number.isFinite(parsedEndTime)
+      ) {
         throw new Error('Bạn cần nhập thời gian bắt đầu và kết thúc');
       }
       if (parsedStartTime < 0 || parsedEndTime <= 0) {
@@ -492,7 +500,6 @@ export default function MusicWorkspace() {
             </article>
           ))}
         </div>
-
       </aside>
 
       <section className="workspace">
@@ -501,7 +508,9 @@ export default function MusicWorkspace() {
             <h2>{activeConversation?.title || 'Chưa có hội thoại'}</h2>
             <p>Chọn hoặc tạo hội thoại để bắt đầu nhận diện nhạc</p>
           </div>
-          <span className={`status-pill ${getPageStatusClass(status)}`}>{status}</span>
+          <span className={`status-pill ${getPageStatusClass(status)}`}>
+            {status}
+          </span>
         </header>
 
         <section className="main-grid">
@@ -526,14 +535,17 @@ export default function MusicWorkspace() {
             <div className="file-info">
               <p>
                 <strong>Tên file:</strong>{' '}
-                {selectedFile?.name || latestAudio?.audio?.original_name || 'Chưa chọn'}
+                {selectedFile?.name ||
+                  latestAudio?.audio?.original_name ||
+                  'Chưa chọn'}
               </p>
               <p>
                 <strong>Tổng thời lượng file:</strong>{' '}
                 {formatDuration(currentDuration)}
               </p>
               <p>
-                <strong>Phần gửi:</strong> {startTime || '--'}s - {endTime || '--'}s
+                <strong>Phần gửi:</strong> {startTime || '--'}s -{' '}
+                {endTime || '--'}s
               </p>
             </div>
 
@@ -545,17 +557,29 @@ export default function MusicWorkspace() {
                   type="number"
                   step="0.1"
                   value={startTime}
-                  onChange={(event) => setStartTime(event.target.value)}
+                  onChange={(event) => {
+                    const newStart = event.target.value;
+                    setStartTime(newStart);
+
+                    // Auto-calculate end time = start + 30 seconds
+                    const startNum = parseTimeInput(newStart);
+                    if (Number.isFinite(startNum)) {
+                      const calculatedEnd = startNum + 30;
+                      const maxEnd = currentDuration || calculatedEnd;
+                      const finalEnd = Math.min(calculatedEnd, maxEnd);
+                      setEndTime(finalEnd.toFixed(1));
+                    }
+                  }}
                 />
               </label>
               <label>
                 <span>Kết thúc (s)</span>
                 <input
-                  min={0.1}
                   type="number"
                   step="0.1"
                   value={endTime}
-                  onChange={(event) => setEndTime(event.target.value)}
+                  disabled
+                  title="Tự động tính: bắt đầu + 30 giây"
                 />
               </label>
             </div>
@@ -577,7 +601,10 @@ export default function MusicWorkspace() {
                   }}
                 />
               ) : latestAudio?.audio?.original_url ? (
-                <audio controls src={absoluteMediaUrl(latestAudio.audio.original_url)} />
+                <audio
+                  controls
+                  src={absoluteMediaUrl(latestAudio.audio.original_url)}
+                />
               ) : (
                 <div className="empty-audio">Chưa có file để nghe</div>
               )}
@@ -585,12 +612,16 @@ export default function MusicWorkspace() {
                 {Math.min(
                   parseTimeInput(endTime) || 0,
                   currentDuration,
-                ).toFixed(0)}s /{' '}
-                {currentDuration.toFixed(0)}s
+                ).toFixed(0)}
+                s / {currentDuration.toFixed(0)}s
               </p>
             </div>
 
-            <button className="process-button" onClick={uploadAndAnalyze} type="button">
+            <button
+              className="process-button"
+              onClick={uploadAndAnalyze}
+              type="button"
+            >
               <Wand2 size={18} />
               Upload & xử lý
             </button>
@@ -681,7 +712,10 @@ function ResultPanel({
             <span className={`status-pill ${statusPillClass(message.status)}`}>
               {statusText(message.status)}
             </span>
-            <p>Upload file âm nhạc và cắt từ {message.audio.start_time || 0}s đến {message.audio.end_time || 0}s</p>
+            <p>
+              Upload file âm nhạc và cắt từ {message.audio.start_time || 0}s đến{' '}
+              {message.audio.end_time || 0}s
+            </p>
           </div>
 
           <p>
@@ -696,7 +730,10 @@ function ResultPanel({
           {message.audio.cut_url ? (
             <audio controls src={absoluteMediaUrl(message.audio.cut_url)} />
           ) : (
-            <audio controls src={absoluteMediaUrl(message.audio.original_url)} />
+            <audio
+              controls
+              src={absoluteMediaUrl(message.audio.original_url)}
+            />
           )}
 
           {message.prediction ? (
@@ -705,7 +742,9 @@ function ResultPanel({
                 <div key={label} className="prediction-row">
                   <div className="prediction-label">
                     <span>{label}</span>
-                    <span className="prediction-value">{Number(score).toFixed(1)}%</span>
+                    <span className="prediction-value">
+                      {Number(score).toFixed(1)}%
+                    </span>
                   </div>
                   <div className="prediction-bar-bg">
                     <div
