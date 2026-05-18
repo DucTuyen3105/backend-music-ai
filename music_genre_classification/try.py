@@ -3,6 +3,7 @@ import librosa
 import numpy as np
 import json
 import os
+import math
 import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio.transforms as T
@@ -27,11 +28,22 @@ class MusicGenreCNNAttention(nn.Module):
         
         self.pool = nn.MaxPool2d(2, 2)
         
-        # --- KHỐI LỚP ATTENTION ---
-        # embed_dim bằng số channel đầu ra của conv4 (256)
+        # --- KHỞI TẠO POSITIONAL ENCODING TRỰC TIẾP ---
+        d_model = 256
+        max_len = 500
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0) # Shape: (1, max_len, 256)
+        # Lưu vào buffer để Pytorch tự động quản lý device (CPU/GPU)
+        self.register_buffer('pe', pe)
+        # ---------------------------------------------
+        
+        # Khối lớp Attention
         self.attention = nn.MultiheadAttention(embed_dim=256, num_heads=4, batch_first=True)
         self.layer_norm = nn.LayerNorm(256)
-        # ---------------------------
         
         self.classifier = nn.Sequential(
             nn.Linear(256, 128),
@@ -53,24 +65,21 @@ class MusicGenreCNNAttention(nn.Module):
         x = self.pool(F.relu(self.bn4(self.conv4(x))))
         
         # --- BẮT ĐẦU XỬ LÝ ATTENTION ---
-        # Hiện tại x có shape: (Batch, Channels=256, H, W)
-        B, C, H, W = x.size()
-        
-        # 1. Ép trục Tần số (H) lại. Giữ nguyên trục Thời gian (W).
-        # Cách tốt nhất: Lấy trung bình theo trục Tần số.
-        # Shape mới: (Batch, Channels=256, Time=W)
+        # Ép trục Tần số (H)
         x_time = x.mean(dim=2) 
         
-        # 2. Xoay trục để đưa vào Attention: (Batch, Time, Channels)
-        # Lúc này: Chuỗi dài W bước, mỗi bước là 1 vector 256 chiều.
+        # Xoay trục (Batch, Time, Channels)
         x_seq = x_time.permute(0, 2, 1)
         
-        # 3. Multi-head Attention
+        # CỘNG TRỰC TIẾP POSITIONAL ENCODING TỪ BUFFER
+        # Chỉ lấy độ dài tương ứng với kích thước x_seq hiện tại
+        x_seq = x_seq + self.pe[:, :x_seq.size(1), :]
+        
+        # Multi-head Attention
         attn_out, _ = self.attention(x_seq, x_seq, x_seq)
         x_seq = self.layer_norm(x_seq + attn_out)
         
-        # 4. Global Average Pooling trên trục Thời gian (W)
-        # Shape: (Batch, Time, Channels) -> Lấy trung bình dọc theo Time -> (Batch, Channels)
+        # Global Average Pooling trên trục Thời gian
         x = x_seq.mean(dim=1) 
         # --- KẾT THÚC XỬ LÝ ATTENTION ---
         
@@ -79,7 +88,7 @@ class MusicGenreCNNAttention(nn.Module):
         return x
 
 # 1. CẤU HÌNH
-MODEL_PATH = "best_model_attention_v2.pth"
+MODEL_PATH = "best_model_an_attention.pth"
 AUDIO_PATH = "./tests/rap_god.mp3"
 LABEL_MAP_PATH = "./data/label_map.json"
 STATS_PATH = "./data/stats.json"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import tempfile
@@ -35,6 +36,22 @@ class MusicGenreCNNAttention(nn.Module):
         self.bn4 = nn.BatchNorm2d(256)
 
         self.pool = nn.MaxPool2d(2, 2)
+
+        # --- POSITIONAL ENCODING INITIALIZATION ---
+        d_model = 256
+        max_len = 500
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2).float()
+            * (-math.log(10000.0) / d_model)
+        )
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)  # Shape: (1, max_len, 256)
+        # Register as buffer - PyTorch auto manages device (CPU/GPU)
+        self.register_buffer("pe", pe)
+        # ----------------------------------------
 
         # --- ATTENTION LAYERS ---
         self.attention = nn.MultiheadAttention(
@@ -75,17 +92,22 @@ class MusicGenreCNNAttention(nn.Module):
         # This gives us a sequence of W timesteps, each with 256-dim vector
         x_seq = x_time.permute(0, 2, 1)
 
-        # 3. Multi-head Attention
+        # 3. Add Positional Encoding directly from buffer
+        # Only take matching length from pe buffer
+        x_seq = x_seq + self.pe[:, : x_seq.size(1), :]
+
+        # 4. Multi-head Attention
         attn_out, _ = self.attention(x_seq, x_seq, x_seq)
         x_seq = self.layer_norm(x_seq + attn_out)
 
-        # 4. Global Average Pooling on time dimension (W)
+        # 5. Global Average Pooling on time dimension (W)
         # (Batch, Time, Channels) -> (Batch, Channels)
         x = x_seq.mean(dim=1)
         # --- END ATTENTION PROCESSING ---
 
         # Pass directly to classifier
         return self.classifier(x)
+
 
 
 class MusicGenreCNN(nn.Module):
@@ -205,12 +227,17 @@ def checkpoint_candidates(model_path: str):
     if not path.is_dir():
         raise FileNotFoundError(f"Model path not found: {model_path}")
     
-    # Try best_model_attention_v2.pth first
+    # Try best_model_an_attention.pth first (highest priority)
+    an_model = path / "best_model_an_attention.pth"
+    if an_model.is_file():
+        yield an_model
+    
+    # Try best_model_attention_v2.pth second
     v2_model = path / "best_model_attention_v2.pth"
     if v2_model.is_file():
         yield v2_model
     
-    # Try best_model_lam.pth second
+    # Try best_model_lam.pth third
     lam_model = path / "best_model_lam.pth"
     if lam_model.is_file():
         yield lam_model
